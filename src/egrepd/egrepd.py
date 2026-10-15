@@ -54,6 +54,69 @@ def hyperlink(path: Path) -> str:
     return f"====> {uri} "
 
 
+def extract_pdf_text(path: Path) -> list[str]:
+    """Extract text from a PDF file."""
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise RuntimeError("PDF support requires: python -m pip install pypdf") from exc
+
+    lines = []
+
+    reader = PdfReader(str(path))
+
+    for page_number, page in enumerate(reader.pages, start=1):
+        # Keep the PDF page number available in the extracted text.
+        lines.append(f"[PDF page {page_number}]")
+
+        text = page.extract_text() or ""
+        lines.extend(text.splitlines())
+
+    return lines
+
+
+def extract_doc_text(path: Path) -> list[str]:
+    """Extract text from a Word .doc document. Requires the antiword linux package."""
+    try:
+        result = subprocess.run(
+            ["antiword", str(path)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "DOC support requires antiword. "
+            "Install it with: sudo apt install antiword"
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"antiword could not extract text: {exc.stderr.strip()}"
+        ) from exc
+
+    return result.stdout.splitlines()
+
+
+def extract_docx_text(path: Path) -> list[str]:
+    """Extract text from a Word .docx document."""
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise RuntimeError(
+            "DOCX support requires: " "python -m pip install python-docx"
+        ) from exc
+
+    document = Document(str(path))
+    lines = []
+
+    for paragraph in document.paragraphs:
+        lines.extend(paragraph.text.splitlines() or [""])
+
+    return lines
+
+
 def extract_pptx_text(path: Path) -> list[str]:
     """Extract slide text and speaker notes from a PowerPoint."""
     try:
@@ -162,7 +225,9 @@ def extract_odf_text(path: Path) -> list[str]:
         try:
             content = archive.read("content.xml")
         except KeyError as exc:
-            raise RuntimeError("OpenDocument file does not contain content.xml") from exc
+            raise RuntimeError(
+                "OpenDocument file does not contain content.xml"
+            ) from exc
 
     root = ET.fromstring(content)
     lines = []
@@ -200,62 +265,13 @@ def extract_text(path: Path) -> list[str]:
     suffix = path.suffix.lower()
 
     if suffix == ".pdf":
-        try:
-            from pypdf import PdfReader
-        except ImportError as exc:
-            raise RuntimeError(
-                "PDF support requires: python -m pip install pypdf"
-            ) from exc
-
-        lines = []
-
-        reader = PdfReader(str(path))
-
-        for page_number, page in enumerate(reader.pages, start=1):
-            # Keep the PDF page number available in the extracted text.
-            lines.append(f"[PDF page {page_number}]")
-
-            text = page.extract_text() or ""
-            lines.extend(text.splitlines())
-
-        return lines
+        return extract_pdf_text(path)
 
     elif suffix == ".doc":
-        try:
-            result = subprocess.run(
-                ["antiword", str(path)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=True,
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                "DOC support requires antiword. "
-                "Install it with: sudo apt install antiword"
-            ) from exc
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(
-                f"antiword could not extract text: {exc.stderr.strip()}"
-            ) from exc
+        return extract_doc_text(path)
 
-        return result.stdout.splitlines()
     elif suffix == ".docx":
-        try:
-            from docx import Document
-        except ImportError as exc:
-            raise RuntimeError(
-                "DOCX support requires: " "python -m pip install python-docx"
-            ) from exc
-
-        document = Document(str(path))
-        lines = []
-
-        for paragraph in document.paragraphs:
-            lines.extend(paragraph.text.splitlines() or [""])
-
-        return lines
+        return extract_docx_text(path)
 
     elif suffix in {".odt", ".odp"}:
         return extract_odf_text(path)
