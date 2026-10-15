@@ -525,6 +525,7 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "-e",
         "--ext",
         type=lambda value: [
             fmt.strip().lower().lstrip(".") for fmt in value.split(",") if fmt.strip()
@@ -547,6 +548,7 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "-c",
         "--color",
         choices=["auto", "always", "never"],
         default="auto",
