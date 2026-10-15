@@ -532,6 +532,8 @@ def main() -> int:
         print("No supported files found.", file=sys.stderr)
         return 1
 
+    print(f"Searching {len(files)} files...")
+
     total_matches = 0
 
     for path in files:
