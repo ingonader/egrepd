@@ -357,6 +357,46 @@ def merge_ranges(
     return merged
 
 
+def truncate_match_line(
+    line: str,
+    pattern: re.Pattern,
+    matchlen: int,
+    red: str,
+    reset: str,
+) -> str:
+    """Display a matchlen-character excerpt around every match in a line."""
+    ranges = []
+    for match in pattern.finditer(line):
+        window_length = max(matchlen, match.end() - match.start())
+        center = (match.start() + match.end()) // 2
+        start = max(0, center - window_length // 2)
+        end = min(len(line), start + window_length)
+        start = max(0, end - window_length)
+        ranges.append((start, end))
+
+    excerpts = []
+    previous_end = 0
+    for start, end in merge_ranges(ranges):
+        if start > previous_end:
+            excerpts.append("...")
+
+        excerpt = line[start:end]
+        excerpts.append(
+            pattern.sub(
+                lambda match: (
+                    f"{red}{match.group(0)}{reset}" if red else match.group(0)
+                ),
+                excerpt,
+            )
+        )
+        previous_end = end
+
+    if previous_end < len(line):
+        excerpts.append("...")
+
+    return "".join(excerpts)
+
+
 def search_file(
     path: Path,
     pattern: re.Pattern,
@@ -364,6 +404,7 @@ def search_file(
     after: int,
     red: str = "",
     reset: str = "",
+    matchlen: int | None = None,
 ) -> int:
     """Search a file and display matches with context."""
     try:
@@ -401,13 +442,16 @@ def search_file(
             line = lines[index]
 
             if index in match_set:
-                # Highlight every occurrence of the search pattern, if configured.
-                line = pattern.sub(
-                    lambda match: (
-                        f"{red}{match.group(0)}{reset}" if red else match.group(0)
-                    ),
-                    line,
-                )
+                if matchlen is not None:
+                    line = truncate_match_line(line, pattern, matchlen, red, reset)
+                else:
+                    # Highlight every occurrence of the search pattern, if configured.
+                    line = pattern.sub(
+                        lambda match: (
+                            f"{red}{match.group(0)}{reset}" if red else match.group(0)
+                        ),
+                        line,
+                    )
 
                 print(f"{line_number}: {line}")
             else:
@@ -472,6 +516,15 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "-l",
+        "--matchlen",
+        type=int,
+        default=None,
+        metavar="CHARS",
+        help="Limit each match excerpt to CHARS, centered on the match",
+    )
+
+    parser.add_argument(
         "--ext",
         type=lambda value: [
             fmt.strip().lower().lstrip(".") for fmt in value.split(",") if fmt.strip()
@@ -512,6 +565,9 @@ def main() -> int:
     if before < 0 or after < 0:
         parser.error("Context values must be non-negative")
 
+    if args.matchlen is not None and args.matchlen < 1:
+        parser.error("Match length must be a positive integer")
+
     flags = re.IGNORECASE if args.ignore_case else 0
 
     try:
@@ -544,6 +600,7 @@ def main() -> int:
             after,
             red,
             reset,
+            args.matchlen,
         )
 
     return 0 if total_matches else 1
