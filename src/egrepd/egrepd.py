@@ -19,15 +19,16 @@ SUPPORTED_EXTENSIONS = {
     ".doc",
     ".docx",
     ".odt",
+    ".odp",
     ".ppt",
     ".pptx",
 }
 
-DEFAULT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".odt", ".pptx"}
+DEFAULT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".odt", ".odp", ".pptx"}
 
 VALID_FORMATS = {extension.lstrip(".") for extension in SUPPORTED_EXTENSIONS}
 
-ODT_TEXT_NAMESPACE = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
+ODF_TEXT_NAMESPACE = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 
 
 def configure_logging():
@@ -155,13 +156,13 @@ def extract_ppt_text(path: Path) -> list[str]:
         ) from exc
 
 
-def extract_odt_text(path: Path) -> list[str]:
-    """Extract paragraph and heading text from an OpenDocument Text file."""
+def extract_odf_text(path: Path) -> list[str]:
+    """Extract paragraph and heading text from an OpenDocument file."""
     with zipfile.ZipFile(path) as archive:
         try:
             content = archive.read("content.xml")
         except KeyError as exc:
-            raise RuntimeError("ODT file does not contain content.xml") from exc
+            raise RuntimeError("OpenDocument file does not contain content.xml") from exc
 
     root = ET.fromstring(content)
     lines = []
@@ -170,11 +171,11 @@ def extract_odt_text(path: Path) -> list[str]:
         extracted = [element.text or ""]
 
         for child in element:
-            if child.tag == f"{ODT_TEXT_NAMESPACE}s":
-                extracted.append(" " * int(child.get(f"{ODT_TEXT_NAMESPACE}c", "1")))
-            elif child.tag == f"{ODT_TEXT_NAMESPACE}tab":
+            if child.tag == f"{ODF_TEXT_NAMESPACE}s":
+                extracted.append(" " * int(child.get(f"{ODF_TEXT_NAMESPACE}c", "1")))
+            elif child.tag == f"{ODF_TEXT_NAMESPACE}tab":
                 extracted.append("\t")
-            elif child.tag == f"{ODT_TEXT_NAMESPACE}line-break":
+            elif child.tag == f"{ODF_TEXT_NAMESPACE}line-break":
                 extracted.append("\n")
             else:
                 extracted.append(extract_element_text(child))
@@ -184,8 +185,8 @@ def extract_odt_text(path: Path) -> list[str]:
         return "".join(extracted)
 
     paragraph_tags = {
-        f"{ODT_TEXT_NAMESPACE}p",
-        f"{ODT_TEXT_NAMESPACE}h",
+        f"{ODF_TEXT_NAMESPACE}p",
+        f"{ODF_TEXT_NAMESPACE}h",
     }
     for element in root.iter():
         if element.tag in paragraph_tags:
@@ -256,8 +257,8 @@ def extract_text(path: Path) -> list[str]:
 
         return lines
 
-    elif suffix == ".odt":
-        return extract_odt_text(path)
+    elif suffix in {".odt", ".odp"}:
+        return extract_odf_text(path)
 
     elif suffix == ".pptx":
         return extract_pptx_text(path)
@@ -407,7 +408,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Search txt, markdown, pdf, doc(x), odt and ppt(x) files "
+            "Search txt, markdown, pdf, doc(x), odt, odp and ppt(x) files "
             "using regular expressions."
         )
     )
@@ -464,7 +465,7 @@ def main() -> int:
         help=(
             "Comma-separated file extensions to search, including custom text formats "
             "(e.g., py,R,java). "
-            "Default: txt, md, pdf, docx, odt, pptx. "
+            "Default: txt, md, pdf, docx, odt, odp, pptx. "
             "Legacy .doc and .ppt files must be explicitly requested."
         ),
     )
