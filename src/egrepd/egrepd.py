@@ -22,6 +22,7 @@ SUPPORTED_EXTENSIONS = {
     ".odp",
     ".ppt",
     ".pptx",
+    ".xlsx",
 }
 
 DEFAULT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".odt", ".odp", ".pptx"}
@@ -260,6 +261,30 @@ def extract_odf_text(path: Path) -> list[str]:
     return lines
 
 
+def extract_xlsx_text(path: Path, separator: str = "|") -> list[str]:
+    """Extract text from an Excel .xlsx document, with each row as a line."""
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise RuntimeError(
+            "Excel support requires: python -m pip install openpyxl"
+        ) from exc
+
+    workbook = load_workbook(filename=str(path), read_only=True, data_only=True)
+    lines = []
+
+    try:
+        for sheet in workbook.worksheets:
+            for row in sheet.iter_rows(values_only=True):
+                lines.append(
+                    separator.join("" if value is None else str(value) for value in row)
+                )
+    finally:
+        workbook.close()
+
+    return lines
+
+
 def extract_text(path: Path) -> list[str]:
     """Extract text lines from supported document types."""
     suffix = path.suffix.lower()
@@ -278,6 +303,9 @@ def extract_text(path: Path) -> list[str]:
 
     elif suffix == ".pptx":
         return extract_pptx_text(path)
+
+    elif suffix == ".xlsx":
+        return extract_xlsx_text(path)
 
     elif suffix == ".ppt":
         return extract_ppt_text(path)
@@ -478,8 +506,10 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Search txt, markdown, pdf, doc(x), odt, odp and ppt(x) files "
-            "using regular expressions."
+            "Search "
+            + ", ".join([i[1:] for i in SUPPORTED_EXTENSIONS])
+            + " as well as any other plain-text files "
+            + "using regular expressions."
         )
     )
 
@@ -544,9 +574,12 @@ def main() -> int:
         metavar="EXTENSIONS",
         help=(
             "Comma-separated file extensions to search, including custom text formats "
-            "(e.g., py,R,java). "
-            "Default: txt, md, pdf, docx, odt, odp, pptx. "
-            "Legacy .doc and .ppt files must be explicitly requested."
+            + "(e.g., py,R,java). "
+            + "Default: "
+            + ",".join([i[1:] for i in DEFAULT_EXTENSIONS])
+            + "; "
+            + ",".join([i[1:] for i in (SUPPORTED_EXTENSIONS - DEFAULT_EXTENSIONS)])
+            + " must be explicitly requested."
         ),
     )
 
