@@ -23,9 +23,20 @@ SUPPORTED_EXTENSIONS = {
     ".ppt",
     ".pptx",
     ".xlsx",
+    ".ods",
 }
 
-DEFAULT_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".odt", ".odp", ".pptx"}
+DEFAULT_EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".pdf",
+    ".docx",
+    ".odt",
+    ".odp",
+    ".pptx",
+    ".xlsx",
+    ".ods",
+}
 
 VALID_FORMATS = {extension.lstrip(".") for extension in SUPPORTED_EXTENSIONS}
 
@@ -284,6 +295,42 @@ def extract_xlsx_text(path: Path, separator: str = "|") -> list[str]:
     return lines
 
 
+def extract_ods_text(path: Path, separator: str = "|") -> list[str]:
+    """Extract text from an OpenDocument .ods spreadsheet, including sheet names."""
+    try:
+        from odf.opendocument import load
+        from odf.table import Table, TableRow, TableCell
+        from odf.text import P
+    except ImportError as exc:
+        raise RuntimeError("ODS support requires: python -m pip install odfpy") from exc
+
+    document = load(str(path))
+    lines = []
+
+    for sheet in document.spreadsheet.getElementsByType(Table):
+        sheet_name = sheet.getAttribute("name")
+
+        for row in sheet.getElementsByType(TableRow):
+            values = []
+
+            for cell in row.getElementsByType(TableCell):
+                text = "".join(
+                    node.data
+                    for paragraph in cell.getElementsByType(P)
+                    for node in paragraph.childNodes
+                    if node.nodeType == node.TEXT_NODE
+                )
+                values.append(text)
+
+                # Account for repeated columns in ODS files.
+                repeat = cell.getAttribute("numbercolumnsrepeated") or 1
+                values.extend([""] * (int(repeat) - 1))
+
+            lines.append(separator.join([sheet_name, *values]))
+
+    return lines
+
+
 def extract_text(path: Path) -> list[str]:
     """Extract text lines from supported document types."""
     suffix = path.suffix.lower()
@@ -305,6 +352,9 @@ def extract_text(path: Path) -> list[str]:
 
     elif suffix == ".xlsx":
         return extract_xlsx_text(path)
+
+    elif suffix == ".ods":
+        return extract_ods_text(path)
 
     elif suffix == ".ppt":
         return extract_ppt_text(path)
