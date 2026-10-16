@@ -397,6 +397,12 @@ def truncate_match_line(
     return "".join(excerpts)
 
 
+def truncate_context_line(line: str, matchlen: int) -> str:
+    if len(line) > matchlen:
+        line = line[:matchlen] + "..."
+    return line
+
+
 def search_file(
     path: Path,
     pattern: re.Pattern,
@@ -442,6 +448,7 @@ def search_file(
             line = lines[index]
 
             if index in match_set:
+                # line contains a match:
                 if matchlen is not None:
                     line = truncate_match_line(line, pattern, matchlen, red, reset)
                 else:
@@ -455,6 +462,9 @@ def search_file(
 
                 print(f"{line_number}: {line}")
             else:
+                # line does not contain match, just a context line:
+                if matchlen is not None:
+                    line = truncate_context_line(line, matchlen)
                 print(f"{line_number}- {line}")
 
     # Separator after all matches and context.
