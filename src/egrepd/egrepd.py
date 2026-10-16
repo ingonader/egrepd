@@ -295,17 +295,91 @@ def extract_xlsx_text(path: Path, separator: str = "|") -> list[str]:
     return lines
 
 
+from pathlib import Path
+
+
 def extract_ods_text(path: Path, separator: str = "|") -> list[str]:
-    """Extract text from an OpenDocument .ods spreadsheet, including sheet names."""
+    """Extract text and cell values from an OpenDocument .ods spreadsheet."""
     try:
         from odf.opendocument import load
-        from odf.table import Table, TableRow, TableCell
-        from odf.text import P
+        from odf.table import Table, TableRow, TableCell, CoveredTableCell
+        from odf.text import P, Span, S, Tab, LineBreak
     except ImportError as exc:
         raise RuntimeError("ODS support requires: python -m pip install odfpy") from exc
 
     document = load(str(path))
     lines = []
+
+    def extract_paragraph_text(paragraph) -> str:
+        """Extract paragraph text, including common ODF inline elements."""
+        parts = []
+
+        def visit(node):
+            if node.nodeType == node.TEXT_NODE:
+                parts.append(node.data)
+            elif node.nodeType == node.ELEMENT_NODE:
+                if node.tagName == "text:s":
+                    count = int(node.getAttribute("c") or 1)
+                    parts.append(" " * count)
+                elif node.tagName == "text:tab":
+                    parts.append("\t")
+                elif node.tagName == "text:line-break":
+                    parts.append("\n")
+                else:
+                    for child in node.childNodes:
+                        visit(child)
+
+        for child in paragraph.childNodes:
+            visit(child)
+
+        return "".join(parts)
+
+    def extract_cell_value(cell) -> str:
+        """Extract a cell's textual content or its stored value."""
+        paragraphs = cell.getElementsByType(P)
+        text = "\n".join(extract_paragraph_text(paragraph) for paragraph in paragraphs)
+
+        # Prefer visible text when present.
+        if text:
+            return text
+
+        # Otherwise, inspect the ODS cell's typed value attributes.
+        value_type = cell.getAttribute("valuetype")
+
+        if value_type == "string":
+            return cell.getAttribute("stringvalue") or ""
+
+        if value_type == "float":
+            return cell.getAttribute("value") or ""
+
+        if value_type == "currency":
+            return cell.getAttribute("value") or ""
+
+        if value_type == "percentage":
+            return cell.getAttribute("value") or ""
+
+        if value_type == "boolean":
+            return cell.getAttribute("booleanvalue") or ""
+
+        if value_type == "date":
+            return cell.getAttribute("datevalue") or ""
+
+        if value_type == "time":
+            return cell.getAttribute("timevalue") or ""
+
+        # Fallback for files with missing or unexpected value types.
+        for attribute in (
+            "stringvalue",
+            "value",
+            "datevalue",
+            "timevalue",
+            "booleanvalue",
+        ):
+            value = cell.getAttribute(attribute)
+            if value is not None:
+                return str(value)
+
+        return ""
 
     for sheet in document.spreadsheet.getElementsByType(Table):
         sheet_name = sheet.getAttribute("name")
@@ -313,18 +387,23 @@ def extract_ods_text(path: Path, separator: str = "|") -> list[str]:
         for row in sheet.getElementsByType(TableRow):
             values = []
 
-            for cell in row.getElementsByType(TableCell):
-                text = "".join(
-                    node.data
-                    for paragraph in cell.getElementsByType(P)
-                    for node in paragraph.childNodes
-                    if node.nodeType == node.TEXT_NODE
-                )
-                values.append(text)
+            for cell in row.childNodes:
+                if cell.nodeType != cell.ELEMENT_NODE:
+                    continue
+
+                if cell.qname not in (TableCell().qname, CoveredTableCell().qname):
+                    continue
+
+                # Covered cells represent merged cells and have no value.
+                if cell.qname == CoveredTableCell().qname:
+                    values.append("")
+                    continue
+
+                values.append(extract_cell_value(cell))
 
                 # Account for repeated columns in ODS files.
-                repeat = cell.getAttribute("numbercolumnsrepeated") or 1
-                values.extend([""] * (int(repeat) - 1))
+                repeat = int(cell.getAttribute("numbercolumnsrepeated") or 1)
+                values.extend([""] * (repeat - 1))
 
             lines.append(separator.join([sheet_name, *values]))
 
