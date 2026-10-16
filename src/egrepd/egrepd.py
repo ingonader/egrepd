@@ -11,6 +11,7 @@ import logging
 import warnings
 import xml.etree.ElementTree as ET
 import zipfile
+import shutil
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -635,8 +636,10 @@ def search_file(
 
     match_set = set(matches)
 
-    # First line: clickable file URI.
-    print(hyperlink(path))
+    # First line: clickable file URI,
+    # , but go back to beginning of line and clear line first:
+    print("\r\033[K", end="", file=sys.stderr)
+    print(f"\r{hyperlink(path)}")
 
     for start, end in ranges:
         for index in range(start, end + 1):
@@ -667,6 +670,30 @@ def search_file(
     print("---")
 
     return len(matches)
+
+
+def show_progress(current: int, total: int, filename: str, bar_width: int = 20) -> None:
+    filename = str(filename)
+    terminal_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+
+    fraction = current / total if total else 0
+    filled = int(bar_width * fraction)
+    bar = "#" * filled + "." * (bar_width - filled)
+
+    prefix = f"\r[{bar}] {fraction:6.1%} "
+    available = max(0, terminal_width - len(prefix) - 1)
+
+    # Truncate long filenames
+    if len(filename) > available:
+        filename = (
+            "..." + filename[-(available - 3) :]
+            if available > 3
+            else filename[:available]
+        )
+
+    message = prefix + filename
+
+    print(message.ljust(terminal_width - 1), end="", file=sys.stderr, flush=True)
 
 
 def main() -> int:
@@ -801,7 +828,9 @@ def main() -> int:
         print("No supported files found.", file=sys.stderr)
         return 1
 
-    print(f"Searching {len(files)} files...")
+    files_searched = 0
+    files_total = len(files)
+    print(f"Searching {files_total} files...")
 
     total_matches = 0
 
@@ -815,6 +844,8 @@ def main() -> int:
             reset,
             args.matchlen,
         )
+        files_searched += 1
+        show_progress(files_searched, files_total, path, bar_width=20)
 
     return 0 if total_matches else 1
 
