@@ -23,6 +23,7 @@ SUPPORTED_EXTENSIONS = {
     ".ppt",
     ".pptx",
     ".xlsx",
+    ".xls",
     ".ods",
 }
 
@@ -295,7 +296,43 @@ def extract_xlsx_text(path: Path, separator: str = "|") -> list[str]:
     return lines
 
 
-from pathlib import Path
+def extract_xls_text(path: Path, separator: str = "|") -> list[str]:
+    """Extract text from a legacy Excel .xls workbook, including worksheet names."""
+    try:
+        import xlrd
+    except ImportError as exc:
+        raise RuntimeError(
+            "Legacy Excel support requires: python -m pip install xlrd"
+        ) from exc
+
+    workbook = xlrd.open_workbook(filename=str(path))
+    lines = []
+
+    for sheet in workbook.sheets():
+        for row_idx in range(sheet.nrows):
+            values = []
+
+            for col_idx in range(sheet.ncols):
+                cell = sheet.cell(row_idx, col_idx)
+
+                if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+                    value = ""
+                elif cell.ctype == xlrd.XL_CELL_DATE:
+                    value = xlrd.xldate_as_datetime(
+                        cell.value, workbook.datemode
+                    ).isoformat()
+                elif cell.ctype == xlrd.XL_CELL_BOOLEAN:
+                    value = str(bool(cell.value)).lower()
+                elif cell.ctype == xlrd.XL_CELL_ERROR:
+                    value = xlrd.error_text_from_code.get(cell.value, str(cell.value))
+                else:
+                    value = str(cell.value)
+
+                values.append(value)
+
+            lines.append(separator.join([sheet.name, *values]))
+
+    return lines
 
 
 def extract_ods_text(path: Path, separator: str = "|") -> list[str]:
@@ -431,6 +468,9 @@ def extract_text(path: Path) -> list[str]:
 
     elif suffix == ".xlsx":
         return extract_xlsx_text(path)
+
+    elif suffix == ".xls":
+        return extract_xls_text(path)
 
     elif suffix == ".ods":
         return extract_ods_text(path)
