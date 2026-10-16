@@ -262,7 +262,7 @@ def extract_odf_text(path: Path) -> list[str]:
 
 
 def extract_xlsx_text(path: Path, separator: str = "|") -> list[str]:
-    """Extract text from an Excel .xlsx document, with each row as a line."""
+    """Extract text from an Excel .xlsx workbook, including worksheet names."""
     try:
         from openpyxl import load_workbook
     except ImportError as exc:
@@ -276,9 +276,8 @@ def extract_xlsx_text(path: Path, separator: str = "|") -> list[str]:
     try:
         for sheet in workbook.worksheets:
             for row in sheet.iter_rows(values_only=True):
-                lines.append(
-                    separator.join("" if value is None else str(value) for value in row)
-                )
+                values = ["" if value is None else str(value) for value in row]
+                lines.append(separator.join([sheet.title, *values]))
     finally:
         workbook.close()
 
