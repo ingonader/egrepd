@@ -67,14 +67,28 @@ ODF_TEXT_NAMESPACE = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 
 
 def configure_logging():
-    """Suppress noisy warnings from document-processing libraries."""
+    """Reduce warning noise from PDF extraction dependencies.
+
+    The command-line output is intended for search results, so warnings emitted
+    by pypdf are suppressed while errors remain visible.
+    """
+    # Keep third-party parser warnings from obscuring search output.
     logging.getLogger("pypdf").setLevel(logging.ERROR)
     warnings.filterwarnings("ignore", module=r"pypdf(\.|$)")
 
 
 def configure_colors(mode: str) -> tuple[str, str]:
-    """Return ANSI color codes according to the selected mode."""
+    """Choose ANSI color codes based on the requested color mode.
 
+    Args:
+        mode: One of `"always"`, `"never"`, or `"auto"`. Auto mode
+            enables colors only when standard output is connected to a TTY.
+
+    Returns:
+        A pair containing the color-start and reset escape sequences, or two
+        empty strings when color output is disabled.
+    """
+    # Auto mode avoids emitting terminal escapes when output is redirected.
     use_color = mode == "always" or (mode == "auto" and sys.stdout.isatty())
 
     if use_color:
@@ -84,13 +98,31 @@ def configure_colors(mode: str) -> tuple[str, str]:
 
 
 def hyperlink(path: Path) -> str:
-    """Return an OSC 8 clickable file hyperlink."""
+    """Format a file path as a terminal OSC 8 hyperlink.
+
+    Args:
+        path: File path to encode as a clickable terminal link.
+
+    Returns:
+        The OSC 8 hyperlink prefix and resolved file URI.
+    """
+    # Resolve first so the URI identifies the file independently of the cwd.
     uri = path.resolve().as_uri()
     return f"====> {uri} "
 
 
 def extract_pdf_text(path: Path) -> list[str]:
-    """Extract text from a PDF file."""
+    """Extract page text from a PDF, marking each page in the result.
+
+    Args:
+        path: PDF file to read.
+
+    Returns:
+        Extracted text as lines, with a page marker before each page's text.
+
+    Raises:
+        RuntimeError: If the pypdf dependency is unavailable.
+    """
     try:
         from pypdf import PdfReader
     except ImportError as exc:
@@ -111,8 +143,19 @@ def extract_pdf_text(path: Path) -> list[str]:
 
 
 def extract_doc_text(path: Path) -> list[str]:
-    """Extract text from a Word .doc document. Requires the antiword linux package."""
+    """Extract lines from a legacy Word `.doc` file using antiword.
+
+    Args:
+        path: Legacy Word document to read.
+
+    Returns:
+        The converted document text split into lines.
+
+    Raises:
+        RuntimeError: If antiword is missing or cannot process the document.
+    """
     try:
+        # antiword provides text conversion for the binary .doc format.
         result = subprocess.run(
             ["antiword", str(path)],
             capture_output=True,
@@ -135,7 +178,18 @@ def extract_doc_text(path: Path) -> list[str]:
 
 
 def extract_docx_text(path: Path) -> list[str]:
-    """Extract text from a Word .docx document."""
+    """Extract paragraph text from a Word `.docx` document.
+
+    Args:
+        path: Word document to read.
+
+    Returns:
+        Paragraph contents split into lines; empty paragraphs are preserved.
+
+    Raises:
+        RuntimeError: If python-docx is unavailable.
+        Exception: If the document cannot be opened or parsed.
+    """
     try:
         from docx import Document
     except ImportError as exc:
@@ -143,6 +197,7 @@ def extract_docx_text(path: Path) -> list[str]:
             "DOCX support requires: " "python -m pip install python-docx"
         ) from exc
 
+    # Preserve blank paragraphs so extracted line positions reflect the document.
     document = Document(str(path))
     lines = []
 
@@ -153,7 +208,17 @@ def extract_docx_text(path: Path) -> list[str]:
 
 
 def extract_pptx_text(path: Path) -> list[str]:
-    """Extract slide text and speaker notes from a PowerPoint."""
+    """Extract visible text, tables, and speaker notes from a presentation.
+
+    Args:
+        path: PowerPoint `.pptx` file to read.
+
+    Returns:
+        Extracted slide text as lines, preceded by slide and notes markers.
+
+    Raises:
+        RuntimeError: If python-pptx is unavailable.
+    """
     try:
         from pptx import Presentation
     except ImportError as exc:
@@ -165,9 +230,17 @@ def extract_pptx_text(path: Path) -> list[str]:
     lines = []
 
     def extract_shape(shape):
-        """Extract text from shapes, tables, and grouped shapes."""
+        """Collect text recursively from one shape and its descendants.
+
+        Args:
+            shape: PowerPoint shape to inspect.
+
+        Returns:
+            Non-empty text paragraphs and table rows found in the shape.
+        """
         extracted = []
 
+        # Read both standard text frames and tabular content on the shape.
         if shape.has_text_frame:
             for paragraph in shape.text_frame.paragraphs:
                 text = paragraph.text.strip()
@@ -213,10 +286,23 @@ def extract_pptx_text(path: Path) -> list[str]:
 
 
 def extract_ppt_text(path: Path) -> list[str]:
-    """Convert a legacy .ppt file to .pptx and extract its text."""
+    """Convert a legacy `.ppt` presentation and extract its text.
+
+    LibreOffice performs the conversion because python-pptx reads only the
+    newer `.pptx` format.
+
+    Args:
+        path: Legacy PowerPoint presentation to convert.
+
+    Returns:
+        Extracted slide text and speaker notes as lines.
+
+    Raises:
+        RuntimeError: If LibreOffice is missing, conversion fails, or times out.
+    """
     try:
         with tempfile.TemporaryDirectory(prefix="docgrep_") as temp_dir:
-
+            # Store the conversion in a temporary directory to avoid altering input files.
             result = subprocess.run(
                 [
                     "libreoffice",
@@ -255,7 +341,18 @@ def extract_ppt_text(path: Path) -> list[str]:
 
 
 def extract_odf_text(path: Path) -> list[str]:
-    """Extract paragraph and heading text from an OpenDocument file."""
+    """Extract paragraphs and headings from an OpenDocument text file.
+
+    Args:
+        path: OpenDocument Text or Presentation file containing `content.xml`.
+
+    Returns:
+        Paragraph and heading text split into lines.
+
+    Raises:
+        RuntimeError: If the archive does not contain `content.xml`.
+    """
+    # ODF text documents are ZIP containers whose document content is in XML.
     with zipfile.ZipFile(path) as archive:
         try:
             content = archive.read("content.xml")
@@ -268,6 +365,14 @@ def extract_odf_text(path: Path) -> list[str]:
     lines = []
 
     def extract_element_text(element) -> str:
+        """Convert an XML element subtree, including ODF spacing markers, to text.
+
+        Args:
+            element: XML element whose child content should be serialized.
+
+        Returns:
+            Text represented by the element, preserving spaces, tabs, and breaks.
+        """
         extracted = [element.text or ""]
 
         for child in element:
@@ -296,7 +401,21 @@ def extract_odf_text(path: Path) -> list[str]:
 
 
 def extract_xlsx_text(path: Path, separator: str = "|") -> list[str]:
-    """Extract text from an Excel .xlsx workbook, including worksheet names."""
+    """Extract worksheet rows from an Excel `.xlsx` workbook.
+
+    Each output line begins with the sheet name, followed by cell values joined
+    with `separator`.
+
+    Args:
+        path: Workbook to read.
+        separator: String used between the sheet name and cell values.
+
+    Returns:
+        One delimited string for each worksheet row.
+
+    Raises:
+        RuntimeError: If openpyxl is unavailable.
+    """
     try:
         from openpyxl import load_workbook
     except ImportError as exc:
@@ -304,6 +423,7 @@ def extract_xlsx_text(path: Path, separator: str = "|") -> list[str]:
             "Excel support requires: python -m pip install openpyxl"
         ) from exc
 
+    # Read cached cell results in streaming mode to limit memory use.
     workbook = load_workbook(filename=str(path), read_only=True, data_only=True)
     lines = []
 
@@ -319,7 +439,19 @@ def extract_xlsx_text(path: Path, separator: str = "|") -> list[str]:
 
 
 def extract_xls_text(path: Path, separator: str = "|") -> list[str]:
-    """Extract text from a legacy Excel .xls workbook, including worksheet names."""
+    """Extract rows and worksheet names from a legacy Excel `.xls` workbook.
+
+    Args:
+        path: Workbook to read.
+        separator: String used between the sheet name and cell values.
+
+    Returns:
+        One delimited string for each worksheet row, with values normalized
+        according to their Excel cell type.
+
+    Raises:
+        RuntimeError: If xlrd is unavailable.
+    """
     try:
         import xlrd
     except ImportError as exc:
@@ -327,6 +459,8 @@ def extract_xls_text(path: Path, separator: str = "|") -> list[str]:
             "Legacy Excel support requires: python -m pip install xlrd"
         ) from exc
 
+    # Open workbook. Note that Cell types need normalization
+    # because dates and booleans are not plain strings.
     workbook = xlrd.open_workbook(filename=str(path))
     lines = []
 
@@ -358,7 +492,21 @@ def extract_xls_text(path: Path, separator: str = "|") -> list[str]:
 
 
 def extract_ods_text(path: Path, separator: str = "|") -> list[str]:
-    """Extract text and cell values from an OpenDocument .ods spreadsheet."""
+    """Extract worksheet names and cell contents from an ODS spreadsheet.
+
+    Visible paragraph text takes precedence; typed cell attributes provide a
+    fallback for values without textual paragraphs.
+
+    Args:
+        path: OpenDocument Spreadsheet file to read.
+        separator: String used between the sheet name and cell values.
+
+    Returns:
+        One delimited string for each worksheet row.
+
+    Raises:
+        RuntimeError: If odfpy is unavailable.
+    """
     try:
         from odf.opendocument import load
         from odf.table import Table, TableRow, TableCell, CoveredTableCell
@@ -366,14 +514,27 @@ def extract_ods_text(path: Path, separator: str = "|") -> list[str]:
     except ImportError as exc:
         raise RuntimeError("ODS support requires: python -m pip install odfpy") from exc
 
+    # Load once, then serialize each row into the common line-based search format.
     document = load(str(path))
     lines = []
 
     def extract_paragraph_text(paragraph) -> str:
-        """Extract paragraph text, including common ODF inline elements."""
+        """Convert an ODF paragraph and its inline nodes to text.
+
+        Args:
+            paragraph: ODF paragraph element to serialize.
+
+        Returns:
+            Paragraph text with explicit spaces, tabs, and line breaks retained.
+        """
         parts = []
 
         def visit(node):
+            """Append a node's text and recursively visit nested elements.
+
+            Args:
+                node: ODF DOM node to serialize into the enclosing result.
+            """
             if node.nodeType == node.TEXT_NODE:
                 parts.append(node.data)
             elif node.nodeType == node.ELEMENT_NODE:
@@ -394,7 +555,14 @@ def extract_ods_text(path: Path, separator: str = "|") -> list[str]:
         return "".join(parts)
 
     def extract_cell_value(cell) -> str:
-        """Extract a cell's textual content or its stored value."""
+        """Return visible paragraph text or the cell's typed stored value.
+
+        Args:
+            cell: ODF table cell to inspect.
+
+        Returns:
+            Cell text or a string representation of its stored value.
+        """
         paragraphs = cell.getElementsByType(P)
         text = "\n".join(extract_paragraph_text(paragraph) for paragraph in paragraphs)
 
@@ -470,7 +638,18 @@ def extract_ods_text(path: Path, separator: str = "|") -> list[str]:
 
 
 def extract_text(path: Path) -> list[str]:
-    """Extract text lines from supported document types."""
+    """Dispatch a file to the extractor for its extension.
+
+    Supported office and PDF formats use dedicated extractors; other files are
+    decoded as UTF-8 text with undecodable bytes replaced.
+
+    Args:
+        path: File whose text should be extracted.
+
+    Returns:
+        Extracted content as a list of lines.
+    """
+    # Normalize the suffix so extension matching is case-insensitive.
     suffix = path.suffix.lower()
 
     if suffix == ".pdf":
@@ -514,8 +693,23 @@ def collect_files(
     formats: list[str] | None = None,
     filename_pattern: re.Pattern[str] | None = None,
 ) -> list[Path]:
-    """Collect files, filtering by the requested extensions and filename pattern."""
+    """Find unique files matching extension and optional filename filters.
 
+    Directories are searched recursively. Nonexistent paths are reported to
+    standard error and skipped.
+
+    Args:
+        inputs: File and directory paths to search.
+        formats: Allowed extensions, with or without a leading dot. `None`
+            selects the default extensions.
+        filename_pattern: Optional regular expression matched against each
+            filename stem.
+
+    Returns:
+        Resolved matching file paths in sorted order.
+    """
+
+    # Normalize extensions once so all candidate comparisons use lowercase suffixes.
     if formats is None:
         allowed_extensions = DEFAULT_EXTENSIONS
     else:
@@ -558,7 +752,18 @@ def collect_files(
 
 
 def archive_suffix(filename: str) -> str | None:
-    """Return the recognized archive suffix, preferring compound suffixes."""
+    """Identify a supported archive suffix in a filename.
+
+    Compound suffixes such as `.tar.gz` are checked before simple suffixes
+    to avoid treating them as generic compressed streams.
+
+    Args:
+        filename: Filename or path basename to inspect.
+
+    Returns:
+        The matching suffix in lowercase, or `None` when unsupported.
+    """
+    # ARCHIVE_SUFFIXES is ordered from compound to simple suffixes.
     filename = filename.lower()
     return next(
         (suffix for suffix in ARCHIVE_SUFFIXES if filename.endswith(suffix)),
@@ -570,7 +775,20 @@ def collect_archives(
     inputs: list[str],
     filename_pattern: re.Pattern[str] | None = None,
 ) -> list[Path]:
-    """Collect supported archive files independently of ordinary files."""
+    """Find supported archives at the given paths, independently of documents.
+
+    Directories are searched recursively, and the optional filename expression
+    is matched against the archive name with its complete archive suffix removed.
+
+    Args:
+        inputs: File and directory paths to inspect.
+        filename_pattern: Optional regular expression matched against archive
+            filename stems.
+
+    Returns:
+        Resolved matching archive paths in sorted order.
+    """
+    # Deduplicate overlapping input paths before returning stable output.
     archives = set()
 
     for item in inputs:
@@ -595,7 +813,21 @@ def collect_archives(
 
 
 def archive_member_names(path: Path) -> tuple[str, list[str]]:
-    """List searchable regular-file candidates in an archive."""
+    """List searchable regular-file members and classify the archive container
+    based on compression method.
+
+    Args:
+        path: Archive path to inspect.
+
+    Returns:
+        A pair of container type (`"zip"`, `"tar"`, `"7z"`, or
+        `"compressed"`) and member names. Unsupported suffixes return an
+        empty type and an empty list.
+
+    Raises:
+        RuntimeError: If 7z support is requested without py7zr.
+    """
+    # Resolve the format from the full suffix before choosing a container reader.
     suffix = archive_suffix(path.name)
     if suffix is None:
         return "", []
@@ -643,8 +875,23 @@ def copy_archive_member(
     member_name: str,
     destination: BinaryIO,
 ) -> None:
-    """Copy one archive member to a temporary file-like destination."""
+    """Stream one archive member into a binary destination.
+
+    The destination is supplied by the caller, allowing extracted data to be
+    staged without writing archive-controlled paths to disk.
+
+    Args:
+        archive_path: Archive containing the member.
+        archive_type: Container kind returned by :func:`archive_member_names`.
+        member_name: Exact member path within the archive.
+        destination: Writable binary file-like object.
+
+    Raises:
+        RuntimeError: If the member cannot be read safely or the format is
+            unsupported.
+    """
     if archive_type == "zip":
+        # Stream ZIP members directly rather than extracting the whole archive.
         with zipfile.ZipFile(archive_path) as archive:
             with archive.open(member_name) as source:
                 shutil.copyfileobj(source, destination)
@@ -662,6 +909,8 @@ def copy_archive_member(
     if archive_type == "7z":
         import py7zr
 
+        # py7zr extracts to disk, so verify the resolved member remains in the
+        # temporary root before opening it.
         with tempfile.TemporaryDirectory(prefix="egrepd_7z_") as temp_dir:
             root = Path(temp_dir).resolve()
             with py7zr.SevenZipFile(archive_path, mode="r") as archive:
@@ -693,6 +942,22 @@ def is_searchable_archive_member(
     filename_pattern: re.Pattern[str] | None,
     compressed_stream: bool = False,
 ) -> bool:
+    """Check whether an archive member passes extension and filename filters.
+
+    A compressed stream has no internal filename, so it is treated as a text
+    file for extension filtering.
+
+    Args:
+        member_name: Member path as stored in the archive.
+        allowed_extensions: Permitted lowercase extensions, including dots.
+        filename_pattern: Optional regular expression applied to the member stem.
+        compressed_stream: Whether the member represents a single compressed
+            stream without a stored filename.
+
+    Returns:
+        `True` when the member should be searched.
+    """
+    # Compressed streams inherit a text extension because their inner name is absent.
     member_path = Path(member_name)
     suffix = member_path.suffix.lower()
 
@@ -707,7 +972,15 @@ def is_searchable_archive_member(
 def merge_ranges(
     ranges: list[tuple[int, int]],
 ) -> list[tuple[int, int]]:
-    """Merge overlapping or adjacent context ranges."""
+    """Combine overlapping or adjacent inclusive integer ranges.
+
+    Args:
+        ranges: Start/end pairs to combine; endpoints are treated as inclusive.
+
+    Returns:
+        Sorted, non-overlapping ranges. Empty input produces an empty list.
+    """
+    # Sorting allows each range to be merged against only the previous result.
     merged = []
 
     for start, end in sorted(ranges):
@@ -729,7 +1002,23 @@ def truncate_match_line(
     red: str,
     reset: str,
 ) -> str:
-    """Display a matchlen-character excerpt around every match in a line."""
+    """Build excerpts around every match, merging intersecting excerpts.
+
+    Excerpts are at most `matchlen` characters long unless a match itself is
+    shorter. Gaps and omitted text are represented by `...`.
+
+    Args:
+        line: Full source line containing zero or more matches.
+        pattern: Compiled expression used to locate and highlight matches.
+        matchlen: Target maximum length of each excerpt.
+        red: ANSI escape sequence used to begin match highlighting; empty
+            disables highlighting.
+        reset: ANSI escape sequence that ends highlighting.
+
+    Returns:
+        A concatenation of excerpts, ellipses, and optional ANSI highlights.
+    """
+    # Center a window on each match, expanding it when the match is longer.
     ranges = []
     for match in pattern.finditer(line):
         window_length = max(matchlen, match.end() - match.start())
@@ -763,6 +1052,17 @@ def truncate_match_line(
 
 
 def truncate_context_line(line: str, matchlen: int) -> str:
+    """Limit a context-only line to the configured character count.
+
+    Args:
+        line: Context line to display.
+        matchlen: Maximum number of source characters to retain.
+
+    Returns:
+        The original line when short enough, otherwise the beginning
+        of the input line plus `...`.
+    """
+    # Context lines do not need a centered excerpt because they contain no match.
     if len(line) > matchlen:
         line = line[:matchlen] + "..."
     return line
@@ -779,8 +1079,29 @@ def search_file(
     display_name: str | None = None,
     link_path: Path | None = None,
 ) -> int:
-    """Search a file and display matches with context."""
+    """Extract, search, and print a file's matching lines and context.
+
+    Read or extraction errors are reported to standard error and treated as
+    zero matches so a batch search can continue.
+
+    Args:
+        path: File to extract and search.
+        pattern: Compiled regular expression to search for.
+        before: Number of preceding context lines to show per match.
+        after: Number of following context lines to show per match.
+        red: Optional ANSI escape sequence to start match highlighting.
+        reset: ANSI escape sequence to end match highlighting.
+        matchlen: Optional maximum excerpt size for displayed lines.
+        display_name: Optional display path, used for archive members.
+        link_path: Optional real file path used as the clickable hyperlink
+            target when displaying an archive member.
+
+    Returns:
+        Number of matching lines found, or zero if extraction fails or there
+        are no matches.
+    """
     try:
+        # Convert every supported input format to the same list-of-lines representation.
         lines = extract_text(path)
     except Exception as exc:
         source_name = (
@@ -794,11 +1115,13 @@ def search_file(
         )
         return 0
 
+    # Track matching line indexes separately from the merged display ranges.
     matches = [index for index, line in enumerate(lines) if pattern.search(line)]
 
     if not matches:
         return 0
 
+    # Merge overlapping context windows to avoid printing the same line twice.
     ranges = merge_ranges(
         [
             (
@@ -811,8 +1134,7 @@ def search_file(
 
     match_set = set(matches)
 
-    # First line: clickable file URI,
-    # , but go back to beginning of line and clear line first:
+    # Clear the progress display before printing the clickable file URI.
     print("\r\033[K", end="", file=sys.stderr)
     if link_path is not None and display_name is not None:
         output_name = f"!/{display_name}"
@@ -858,9 +1180,19 @@ def show_progress(
     bar_width: int = 20,
     label: str = "",
 ) -> None:
+    """Write a single-line progress indicator to standard error.
+
+    Args:
+        current: Number of completed items.
+        total: Total number of items; zero displays a zero-percent bar.
+        filename: Current filename or status text shown beside the bar.
+        bar_width: Number of characters used for the progress bar.
+        label: Optional prefix distinguishing progress categories.
+    """
     filename = str(filename)
     terminal_width = shutil.get_terminal_size(fallback=(80, 24)).columns
 
+    # Clamp available filename space to avoid negative padding on narrow terminals.
     fraction = current / total if total else 0
     filled = int(bar_width * fraction)
     bar = "#" * filled + "." * (bar_width - filled)
@@ -868,7 +1200,7 @@ def show_progress(
     prefix = f"\r{label}[{bar}] {fraction:6.1%} "
     available = max(0, terminal_width - len(prefix) - 1)
 
-    # Truncate long filenames
+    # Truncate long filenames.
     if len(filename) > available:
         filename = (
             "..." + filename[-(available - 3) :]
@@ -882,6 +1214,19 @@ def show_progress(
 
 
 def main() -> int:
+    """Run the command-line document search and return its process status.
+
+    The command parses search options, discovers matching documents and
+    optionally archive members, prints matching lines with context, and reports
+    progress on standard error.
+
+    Returns:
+        `0` when at least one matching line is found, otherwise `1`.
+
+    Raises:
+        SystemExit: For invalid command-line arguments or invalid regular
+            expressions, as handled by :mod:`argparse`.
+    """
     configure_logging()
 
     parser = argparse.ArgumentParser(
@@ -984,6 +1329,7 @@ def main() -> int:
         default="auto",
         help=("Colorize matching text: " "auto (default), always, or never."),
     )
+    # Parse and normalize command-line options before discovering input files.
     args = parser.parse_args()
 
     red, reset = configure_colors(args.color)
@@ -991,6 +1337,7 @@ def main() -> int:
     before = args.before_context
     after = args.after_context
 
+    # The combined context option overrides the individual before/after values.
     if args.context is not None:
         before = after = args.context
 
@@ -1000,6 +1347,7 @@ def main() -> int:
     if args.matchlen is not None and args.matchlen < 1:
         parser.error("Match length must be a positive integer")
 
+    # Compile both expressions up front so invalid patterns fail before searching.
     flags = re.IGNORECASE if args.ignore_case else 0
 
     try:
@@ -1014,6 +1362,8 @@ def main() -> int:
         except re.error as exc:
             parser.error(f"Invalid filename regular expression: {exc}")
 
+    # Discover ordinary files and archives separately because their contents
+    # require different extraction paths.
     files = collect_files(args.paths, args.ext, filename_pattern)
     archives = (
         collect_archives(args.paths, filename_pattern) if args.include_archives else []
@@ -1023,6 +1373,7 @@ def main() -> int:
         print("No supported files found.", file=sys.stderr)
         return 1
 
+    # Filter archive members with the same extension policy used for normal files.
     allowed_extensions = (
         DEFAULT_EXTENSIONS
         if args.ext is None
@@ -1051,6 +1402,7 @@ def main() -> int:
             )
         )
 
+    # Print number of files, and number of archives and their content-files.
     files_searched = 0
     files_total = len(files)
     if args.include_archives:
@@ -1064,6 +1416,7 @@ def main() -> int:
 
     total_matches = 0
 
+    # Search ordinary files first, updating progress after each completed file.
     for path in files:
         total_matches += search_file(
             path,
@@ -1094,6 +1447,7 @@ def main() -> int:
             print(file=sys.stderr)
         print(f"Searching {len(archive_members)} files in archives...")
 
+        # Extract each selected member to a temporary file before reusing search_file.
         if archive_members:
             with tempfile.TemporaryDirectory(prefix="egrepd_archive_") as temp_dir:
                 temp_root = Path(temp_dir)
@@ -1137,6 +1491,7 @@ def main() -> int:
         else:
             show_progress(0, 0, "No matching archive members", label="Archives ")
 
+        # Print newline on stderr for correct printing afterwards.
         print(file=sys.stderr)
 
     # Print summary of searched files.
