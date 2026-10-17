@@ -1023,31 +1023,6 @@ def main() -> int:
         print("No supported files found.", file=sys.stderr)
         return 1
 
-    files_searched = 0
-    files_total = len(files)
-    print(f"Searching {files_total} files...")
-
-    total_matches = 0
-
-    for path in files:
-        total_matches += search_file(
-            path,
-            pattern,
-            before,
-            after,
-            red,
-            reset,
-            args.matchlen,
-        )
-        files_searched += 1
-        show_progress(
-            files_searched,
-            files_total,
-            path,
-            bar_width=20,
-            label="Files " if args.include_archives else "",
-        )
-
     allowed_extensions = (
         DEFAULT_EXTENSIONS
         if args.ext is None
@@ -1074,6 +1049,35 @@ def main() -> int:
                 filename_pattern,
                 compressed_stream,
             )
+        )
+
+    files_searched = 0
+    files_total = len(files)
+    if args.include_archives:
+        print(
+            f"Found {files_total} files, and {len(archives)} archives containing another {len(archive_members)} files..."
+        )
+    print(f"Searching {files_total} files...")
+
+    total_matches = 0
+
+    for path in files:
+        total_matches += search_file(
+            path,
+            pattern,
+            before,
+            after,
+            red,
+            reset,
+            args.matchlen,
+        )
+        files_searched += 1
+        show_progress(
+            files_searched,
+            files_total,
+            path,
+            bar_width=20,
+            label="Files " if args.include_archives else "",
         )
 
     if args.include_archives:
