@@ -1057,7 +1057,10 @@ def main() -> int:
         print(
             f"Found {files_total} files, and {len(archives)} archives containing another {len(archive_members)} files..."
         )
-    print(f"Searching {files_total} files...")
+        archive_note = ""
+    else:
+        archive_note = " (not searching archives)"
+    print(f"Searching {files_total} files...{archive_note}")
 
     total_matches = 0
 
@@ -1079,6 +1082,9 @@ def main() -> int:
             bar_width=20,
             label="Files " if args.include_archives else "",
         )
+
+    # Print newline on stderr for correct printing afterwards.
+    print(file=sys.stderr)
 
     if args.include_archives:
         if files:
@@ -1132,6 +1138,14 @@ def main() -> int:
             show_progress(0, 0, "No matching archive members", label="Archives ")
 
         print(file=sys.stderr)
+
+    # Print summary of searched files.
+    if args.include_archives:
+        print(
+            f"Searched {files_total} files, and {len(archives)} archives containing another {len(archive_members)} files."
+        )
+    else:
+        print(f"Searched {files_total} files (archives excluded by user).")
 
     return 0 if total_matches else 1
 
