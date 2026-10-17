@@ -13,6 +13,7 @@ dependencies = [
     "odfpy>=1.4.1",
     "openpyxl>=3.1.5",
     "pip>=26.2.1",
+    "py7zr>=0.20.0",
     "pypdf>=6.20.1",
     "python-docx>=1.2.0",
     "python-pptx>=1.0.2",

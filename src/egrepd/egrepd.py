@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
+import bz2
+import gzip
+import lzma
 import re
 import sys
 from pathlib import Path
@@ -12,6 +15,8 @@ import warnings
 import xml.etree.ElementTree as ET
 import zipfile
 import shutil
+import tarfile
+from typing import BinaryIO
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -39,6 +44,22 @@ DEFAULT_EXTENSIONS = {
     ".xlsx",
     ".ods",
 }
+
+ARCHIVE_SUFFIXES = (
+    ".tar.gz",
+    ".tar.bz2",
+    ".tar.xz",
+    ".tgz",
+    ".tbz2",
+    ".txz",
+    ".zip",
+    ".jar",
+    ".7z",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".xz",
+)
 
 VALID_FORMATS = {extension.lstrip(".") for extension in SUPPORTED_EXTENSIONS}
 
@@ -536,6 +557,153 @@ def collect_files(
     return sorted(files)
 
 
+def archive_suffix(filename: str) -> str | None:
+    """Return the recognized archive suffix, preferring compound suffixes."""
+    filename = filename.lower()
+    return next(
+        (suffix for suffix in ARCHIVE_SUFFIXES if filename.endswith(suffix)),
+        None,
+    )
+
+
+def collect_archives(
+    inputs: list[str],
+    filename_pattern: re.Pattern[str] | None = None,
+) -> list[Path]:
+    """Collect supported archive files independently of ordinary files."""
+    archives = set()
+
+    for item in inputs:
+        path = Path(item).expanduser()
+
+        if not path.exists():
+            continue
+
+        candidates = (
+            [path] if path.is_file() else path.rglob("*") if path.is_dir() else []
+        )
+        for candidate in candidates:
+            suffix = archive_suffix(candidate.name)
+            if not candidate.is_file() or suffix is None:
+                continue
+
+            stem = candidate.name[: -len(suffix)]
+            if filename_pattern is None or filename_pattern.search(stem):
+                archives.add(candidate.resolve())
+
+    return sorted(archives)
+
+
+def archive_member_names(path: Path) -> tuple[str, list[str]]:
+    """List searchable regular-file candidates in an archive."""
+    suffix = archive_suffix(path.name)
+    if suffix is None:
+        return "", []
+
+    if suffix in {".zip", ".jar"}:
+        with zipfile.ZipFile(path) as archive:
+            return "zip", [
+                info.filename for info in archive.infolist() if not info.is_dir()
+            ]
+
+    if suffix in {
+        ".tar",
+        ".tar.gz",
+        ".tar.bz2",
+        ".tar.xz",
+        ".tgz",
+        ".tbz2",
+        ".txz",
+    }:
+        with tarfile.open(path, "r:*") as archive:
+            return "tar", [
+                member.name for member in archive.getmembers() if member.isfile()
+            ]
+
+    if suffix == ".7z":
+        try:
+            import py7zr
+        except ImportError as exc:
+            raise RuntimeError(
+                "7z support requires: python -m pip install py7zr"
+            ) from exc
+
+        with py7zr.SevenZipFile(path, mode="r") as archive:
+            return "7z", [
+                item.filename for item in archive.list() if not item.is_directory
+            ]
+
+    member_name = path.name[: -len(suffix)]
+    return "compressed", [member_name]
+
+
+def copy_archive_member(
+    archive_path: Path,
+    archive_type: str,
+    member_name: str,
+    destination: BinaryIO,
+) -> None:
+    """Copy one archive member to a temporary file-like destination."""
+    if archive_type == "zip":
+        with zipfile.ZipFile(archive_path) as archive:
+            with archive.open(member_name) as source:
+                shutil.copyfileobj(source, destination)
+        return
+
+    if archive_type == "tar":
+        with tarfile.open(archive_path, "r:*") as archive:
+            source = archive.extractfile(member_name)
+            if source is None:
+                raise RuntimeError(f"Cannot read archive member {member_name}")
+            with source:
+                shutil.copyfileobj(source, destination)
+        return
+
+    if archive_type == "7z":
+        import py7zr
+
+        with tempfile.TemporaryDirectory(prefix="egrepd_7z_") as temp_dir:
+            root = Path(temp_dir).resolve()
+            with py7zr.SevenZipFile(archive_path, mode="r") as archive:
+                archive.extract(path=root, targets=[member_name])
+
+            extracted = (root / member_name).resolve()
+            if not extracted.is_relative_to(root) or not extracted.is_file():
+                raise RuntimeError(f"Cannot safely read archive member {member_name}")
+            with extracted.open("rb") as source:
+                shutil.copyfileobj(source, destination)
+        return
+
+    suffix = archive_suffix(archive_path.name)
+    if suffix not in {".gz", ".bz2", ".xz"}:
+        raise RuntimeError(f"Unsupported archive format: {archive_path}")
+
+    open_compressed = {
+        ".gz": gzip.open,
+        ".bz2": bz2.open,
+        ".xz": lzma.open,
+    }[suffix]
+    with open_compressed(archive_path, "rb") as source:
+        shutil.copyfileobj(source, destination)
+
+
+def is_searchable_archive_member(
+    member_name: str,
+    allowed_extensions: set[str],
+    filename_pattern: re.Pattern[str] | None,
+    compressed_stream: bool = False,
+) -> bool:
+    member_path = Path(member_name)
+    suffix = member_path.suffix.lower()
+
+    if not suffix and compressed_stream:
+        suffix = ".txt"
+
+    return suffix in allowed_extensions and (
+        filename_pattern is None or filename_pattern.search(member_path.stem)
+    )
+
+
 def merge_ranges(
     ranges: list[tuple[int, int]],
 ) -> list[tuple[int, int]]:
@@ -608,13 +776,20 @@ def search_file(
     red: str = "",
     reset: str = "",
     matchlen: int | None = None,
+    display_name: str | None = None,
+    link_path: Path | None = None,
 ) -> int:
     """Search a file and display matches with context."""
     try:
         lines = extract_text(path)
     except Exception as exc:
+        source_name = (
+            f"{link_path}!/{display_name}"
+            if link_path is not None and display_name is not None
+            else display_name or path
+        )
         print(
-            f"Warning: cannot read {path}: {exc}",
+            f"Warning: cannot read {source_name}: {exc}",
             file=sys.stderr,
         )
         return 0
@@ -639,7 +814,11 @@ def search_file(
     # First line: clickable file URI,
     # , but go back to beginning of line and clear line first:
     print("\r\033[K", end="", file=sys.stderr)
-    print(f"\r{hyperlink(path)}")
+    if link_path is not None and display_name is not None:
+        output_name = f"!/{display_name}"
+    else:
+        output_name = display_name or ""
+    print(f"\r{hyperlink(link_path or path)}{output_name}")
 
     for start, end in ranges:
         for index in range(start, end + 1):
@@ -672,7 +851,13 @@ def search_file(
     return len(matches)
 
 
-def show_progress(current: int, total: int, filename: str, bar_width: int = 20) -> None:
+def show_progress(
+    current: int,
+    total: int,
+    filename: str,
+    bar_width: int = 20,
+    label: str = "",
+) -> None:
     filename = str(filename)
     terminal_width = shutil.get_terminal_size(fallback=(80, 24)).columns
 
@@ -680,7 +865,7 @@ def show_progress(current: int, total: int, filename: str, bar_width: int = 20) 
     filled = int(bar_width * fraction)
     bar = "#" * filled + "." * (bar_width - filled)
 
-    prefix = f"\r[{bar}] {fraction:6.1%} "
+    prefix = f"\r{label}[{bar}] {fraction:6.1%} "
     available = max(0, terminal_width - len(prefix) - 1)
 
     # Truncate long filenames
@@ -724,6 +909,13 @@ def main() -> int:
         "--ignore-case",
         action="store_true",
         help="Ignore case distinctions",
+    )
+
+    parser.add_argument(
+        "-a",
+        "--include-archives",
+        action="store_true",
+        help="Search supported archive files after searching ordinary files",
     )
 
     parser.add_argument(
@@ -823,8 +1015,11 @@ def main() -> int:
             parser.error(f"Invalid filename regular expression: {exc}")
 
     files = collect_files(args.paths, args.ext, filename_pattern)
+    archives = (
+        collect_archives(args.paths, filename_pattern) if args.include_archives else []
+    )
 
-    if not files:
+    if not files and not archives:
         print("No supported files found.", file=sys.stderr)
         return 1
 
@@ -845,7 +1040,94 @@ def main() -> int:
             args.matchlen,
         )
         files_searched += 1
-        show_progress(files_searched, files_total, path, bar_width=20)
+        show_progress(
+            files_searched,
+            files_total,
+            path,
+            bar_width=20,
+            label="Files " if args.include_archives else "",
+        )
+
+    allowed_extensions = (
+        DEFAULT_EXTENSIONS
+        if args.ext is None
+        else {f".{extension.lower().lstrip('.')}" for extension in args.ext}
+    )
+    archive_members = []
+    for archive_path in archives:
+        try:
+            archive_type, member_names = archive_member_names(archive_path)
+        except Exception as exc:
+            print(
+                f"\nWarning: cannot read archive {archive_path}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+
+        compressed_stream = archive_type == "compressed"
+        archive_members.extend(
+            (archive_path, archive_type, member_name, compressed_stream)
+            for member_name in member_names
+            if is_searchable_archive_member(
+                member_name,
+                allowed_extensions,
+                filename_pattern,
+                compressed_stream,
+            )
+        )
+
+    if args.include_archives:
+        if files:
+            print(file=sys.stderr)
+        else:
+            show_progress(0, 0, "No ordinary files", label="Files ")
+            print(file=sys.stderr)
+        print(f"Searching {len(archive_members)} files in archives...")
+
+        if archive_members:
+            with tempfile.TemporaryDirectory(prefix="egrepd_archive_") as temp_dir:
+                temp_root = Path(temp_dir)
+                for index, (archive_path, archive_type, member_name, _) in enumerate(
+                    archive_members, start=1
+                ):
+                    member_path = temp_root / f"member{Path(member_name).suffix}"
+                    display_name = f"{archive_path}!/{member_name}"
+                    try:
+                        with member_path.open("wb") as destination:
+                            copy_archive_member(
+                                archive_path,
+                                archive_type,
+                                member_name,
+                                destination,
+                            )
+                        total_matches += search_file(
+                            member_path,
+                            pattern,
+                            before,
+                            after,
+                            red,
+                            reset,
+                            args.matchlen,
+                            display_name=member_name,
+                            link_path=archive_path,
+                        )
+                    except Exception as exc:
+                        print(
+                            f"\nWarning: cannot read {display_name}: {exc}",
+                            file=sys.stderr,
+                        )
+
+                    show_progress(
+                        index,
+                        len(archive_members),
+                        archive_path.name,
+                        bar_width=20,
+                        label="Archives ",
+                    )
+        else:
+            show_progress(0, 0, "No matching archive members", label="Archives ")
+
+        print(file=sys.stderr)
 
     return 0 if total_matches else 1
 
