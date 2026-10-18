@@ -41,8 +41,6 @@ DEFAULT_EXTENSIONS = {
     ".odt",
     ".odp",
     ".pptx",
-    ".xlsx",
-    ".ods",
 }
 
 ARCHIVE_SUFFIXES = (
