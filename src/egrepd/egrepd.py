@@ -75,6 +75,33 @@ def configure_logging():
     warnings.filterwarnings("ignore", module=r"pypdf(\.|$)")
 
 
+def get_allowed_extensions(extension_spec: str | None) -> set[str]:
+    """Normalize an extension option, including additive and extensionless forms.
+
+    Args:
+        extension_spec: Comma-separated extensions. A leading `+` includes the
+            default extensions, and empty entries select files without an
+            extension. `None` selects only the defaults.
+
+    Returns:
+        Lowercase extensions with leading dots, including an empty string when
+        extensionless files are selected.
+    """
+    if extension_spec is None:
+        return DEFAULT_EXTENSIONS
+
+    include_defaults = extension_spec.startswith("+")
+    if include_defaults:
+        extension_spec = extension_spec[1:]
+
+    allowed_extensions = set(DEFAULT_EXTENSIONS) if include_defaults else set()
+    for extension in extension_spec.split(","):
+        extension = extension.strip().lower().lstrip(".")
+        allowed_extensions.add(f".{extension}" if extension else "")
+
+    return allowed_extensions
+
+
 def configure_colors(mode: str) -> tuple[str, str]:
     """Choose ANSI color codes based on the requested color mode.
 
@@ -688,7 +715,7 @@ def extract_text(path: Path) -> list[str]:
 
 def collect_files(
     inputs: list[str],
-    formats: list[str] | None = None,
+    formats: str | None = None,
     filename_pattern: re.Pattern[str] | None = None,
 ) -> list[Path]:
     """Find unique files matching extension and optional filename filters.
@@ -698,8 +725,9 @@ def collect_files(
 
     Args:
         inputs: File and directory paths to search.
-        formats: Allowed extensions, with or without a leading dot. `None`
-            selects the default extensions.
+        formats: Comma-separated extensions. A leading `+` adds to the default
+            extensions, and empty entries select files without an extension.
+            `None` selects the default extensions.
         filename_pattern: Optional regular expression matched against each
             filename stem.
 
@@ -707,13 +735,7 @@ def collect_files(
         Resolved matching file paths in sorted order.
     """
 
-    # Normalize extensions once so all candidate comparisons use lowercase suffixes.
-    if formats is None:
-        allowed_extensions = DEFAULT_EXTENSIONS
-    else:
-        allowed_extensions = {
-            f".{fmt.lower().lstrip('.')}" for fmt in formats if fmt.strip()
-        }
+    allowed_extensions = get_allowed_extensions(formats)
 
     files = set()
 
@@ -1297,15 +1319,13 @@ def main() -> int:
     parser.add_argument(
         "-e",
         "--ext",
-        type=lambda value: [
-            fmt.strip().lower().lstrip(".") for fmt in value.split(",") if fmt.strip()
-        ],
+        type=str,
         default=None,
         metavar="EXTENSIONS",
         help=(
-            "Comma-separated file extensions to search, including custom text formats "
-            + "(e.g., py,R,java). "
-            + "Default: "
+            "Comma-separated extensions (e.g., 'py,R,java'); a leading '+' adds to "
+            + "the defaults (e.g., '+py,sh' adds both options), and empty entries (e.g., 'py,') select extensionless files. "
+            + "Defaults: "
             + ",".join([i[1:] for i in DEFAULT_EXTENSIONS])
             + "; "
             + ",".join([i[1:] for i in (SUPPORTED_EXTENSIONS - DEFAULT_EXTENSIONS)])
@@ -1372,11 +1392,7 @@ def main() -> int:
         return 1
 
     # Filter archive members with the same extension policy used for normal files.
-    allowed_extensions = (
-        DEFAULT_EXTENSIONS
-        if args.ext is None
-        else {f".{extension.lower().lstrip('.')}" for extension in args.ext}
-    )
+    allowed_extensions = get_allowed_extensions(args.ext)
     archive_members = []
     for archive_path in archives:
         try:
