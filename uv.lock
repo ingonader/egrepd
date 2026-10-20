@@ -300,6 +300,11 @@ dependencies = [
     { name = "xlrd" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "ipykernel" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "argparse", specifier = ">=1.4.0" },
@@ -314,6 +319,9 @@ requires-dist = [
     { name = "python-pptx", specifier = ">=1.0.2" },
     { name = "xlrd", specifier = ">=2.0.2" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ipykernel", specifier = ">=7.4.0" }]
 
 [[package]]
 name = "et-xmlfile"
