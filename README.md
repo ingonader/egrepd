@@ -129,4 +129,4 @@ Archive members use the same extension selection as ordinary files. A standalone
 
 Matching lines are displayed with their one-based line numbers. Context lines use a dash after the line number; matching lines use a colon. When color is enabled, each matching occurrence is highlighted. File headings include a clickable terminal file link when the terminal supports OSC 8 hyperlinks.
 
-The command exits with status `0` if at least one matching line is found, or `1` if there are no matches or no supported files. Invalid arguments and regular expressions are reported by the command-line parser. Files that cannot be read produce warnings on standard error; the search continues with other files.
+The command exits with status `0` if at least one matching line is found, or `1` if there are no matches or no supported files. Pressing Ctrl+C stops the search, prints `Interrupted by user`, and exits with status `130`. Invalid arguments and regular expressions are reported by the command-line parser. Files that cannot be read produce warnings on standard error; the search continues with other files.

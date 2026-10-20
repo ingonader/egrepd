@@ -1279,7 +1279,7 @@ def show_progress(
     print(message.ljust(terminal_width - 1), end="", file=sys.stderr, flush=True)
 
 
-def main() -> int:
+def _run() -> int:
     """Run the command-line document search and return its process status.
 
     The command parses search options, discovers matching documents and
@@ -1563,6 +1563,15 @@ def main() -> int:
         print(f"Searched {files_total} files (archives excluded by user).")
 
     return 0 if total_matches else 1
+
+
+def main() -> int:
+    """Run the command-line application, reporting user interruptions cleanly."""
+    try:
+        return _run()
+    except KeyboardInterrupt:
+        print("Interrupted by user", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":
