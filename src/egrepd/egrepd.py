@@ -136,7 +136,7 @@ def hyperlink(path: Path) -> str:
     return f"====> {uri} "
 
 
-def extract_pdf_text(path: Path) -> list[str]:
+def extract_pdf_text_pypdf(path: Path) -> list[str]:
     """Extract page text from a PDF, marking each page in the result.
 
     Args:
@@ -165,6 +165,52 @@ def extract_pdf_text(path: Path) -> list[str]:
         lines.extend(text.splitlines())
 
     return lines
+
+
+def extract_pdf_text_pymupdf(path: Path) -> list[str]:
+    """Extract text from a PDF, marking each page in the result.
+
+    Args:
+        path: PDF file to read.
+
+    Returns:
+        Extracted text as lines, with a page marker before each page's text.
+
+    Raises:
+        RuntimeError: If the pypdf dependency is unavailable.
+    """
+    try:
+        import pymupdf
+    except ImportError as exc:
+        raise RuntimeError(
+            "PDF support requires: python -m pip install pymupdf"
+        ) from exc
+
+    lines = []
+
+    with pymupdf.open(path) as doc:
+        for page_number, page in enumerate(doc, start=1):
+            lines.append(f"[PDF page {page_number}]")
+
+            text = page.get_text("text") or ""
+            lines.extend(text.splitlines())
+
+    return lines
+
+
+def extract_pdf_text(path: Path) -> list[str]:
+    """Extract PDF text, preferring PyMuPDF and falling back to pypdf.
+
+    Args:
+        path: PDF file to read.
+
+    Returns:
+        Extracted text as lines, with a page marker before each page's text.
+    """
+    try:
+        return extract_pdf_text_pymupdf(path)
+    except Exception:
+        return extract_pdf_text_pypdf(path)
 
 
 def extract_doc_text(path: Path) -> list[str]:
