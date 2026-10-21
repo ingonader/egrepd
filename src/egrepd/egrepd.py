@@ -781,6 +781,12 @@ def extract_text(path: Path) -> list[str]:
     return []
 
 
+def show_candidate_id_progress(cnt: int, candidate_name: str) -> None:
+    msg = f"Searching candidates: Found {str(cnt)} {candidate_name}..."
+    print("\r\033[K", end="", file=sys.stderr)
+    print(f"{msg}", end="", file=sys.stderr, flush=True)
+
+
 def collect_files(
     inputs: list[str],
     formats: str | None = None,
@@ -822,6 +828,8 @@ def collect_files(
                 filename_pattern is None or filename_pattern.search(path.stem)
             ):
                 files.add(path.resolve())
+                file_cnt = len(files)
+                show_candidate_id_progress(file_cnt, "files")
             continue
 
         if path.is_dir():
@@ -835,7 +843,11 @@ def collect_files(
                     )
                 ):
                     files.add(candidate.resolve())
+                    file_cnt = len(files)
+                    show_candidate_id_progress(file_cnt, "files")
 
+    # Clear the progress display:
+    print("\r\033[K", end="", file=sys.stderr)
     return sorted(files)
 
 
@@ -878,6 +890,8 @@ def collect_archives(
     """
     # Deduplicate overlapping input paths before returning stable output.
     archives = set()
+    archive_cnt = 0
+    show_candidate_id_progress(archive_cnt, "archives")
 
     for item in inputs:
         path = Path(item).expanduser()
@@ -896,7 +910,11 @@ def collect_archives(
             stem = candidate.name[: -len(suffix)]
             if filename_pattern is None or filename_pattern.search(stem):
                 archives.add(candidate.resolve())
+                archive_cnt = len(archives)
+                show_candidate_id_progress(archive_cnt, "archives")
 
+    # Clear the progress display:
+    print("\r\033[K", end="", file=sys.stderr)
     return sorted(archives)
 
 
@@ -1261,7 +1279,7 @@ def search_file(
     return len(matches)
 
 
-def show_progress(
+def show_search_progress(
     current: int,
     total: int,
     filename: str,
@@ -1527,7 +1545,7 @@ def _run() -> int:
             args.matchlen,
         )
         files_searched += 1
-        show_progress(
+        show_search_progress(
             files_searched,
             files_total,
             path,
@@ -1542,7 +1560,7 @@ def _run() -> int:
         if files:
             print(file=sys.stderr)
         else:
-            show_progress(0, 0, "No ordinary files", label="Files ")
+            show_search_progress(0, 0, "No ordinary files", label="Files ")
             print(file=sys.stderr)
         print(f"Searching {len(archive_members)} files in archives...")
 
@@ -1580,7 +1598,7 @@ def _run() -> int:
                             file=sys.stderr,
                         )
 
-                    show_progress(
+                    show_search_progress(
                         index,
                         len(archive_members),
                         archive_path.name,
@@ -1588,7 +1606,7 @@ def _run() -> int:
                         label="Archives ",
                     )
         else:
-            show_progress(0, 0, "No matching archive members", label="Archives ")
+            show_search_progress(0, 0, "No matching archive members", label="Archives ")
 
         # Print newline on stderr for correct printing afterwards.
         print(file=sys.stderr)
