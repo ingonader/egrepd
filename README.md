@@ -66,10 +66,11 @@ Search a particular file, ignoring case and showing two lines of context on each
 uvx egrepd -i -C 2 'chapter\s+[0-9]+' ./books/novel.txt
 ```
 
-Search source files by extension and filter file names by a regular expression:
+Search source files by extension (the extension selector also accepts regexes)
+and filter file names by a regular expression:
 
 ```bash
-uvx egrepd -e py,js -f 'test|example' 'TODO|FIXME' ./project
+uvx egrepd -e 'py|js' -f 'test|example' 'TODO|FIXME' ./project
 ```
 
 Enable archive searching with `-a`:
@@ -94,7 +95,7 @@ Run `egrepd --help` (or `uvx egrepd --help`) to see the options in the terminal.
 | `-A N`, `--after-context N` | Print up to `N` lines after each matching line. Default: `0`. |
 | `-C N`, `--context N` | Print up to `N` lines before and after each match. This overrides `-A` and `-B` if they are also supplied. |
 | `-l CHARS`, `--matchlen CHARS` | Limit displayed line excerpts to approximately `CHARS` characters, centered on each match. A match longer than this value is kept whole. Context-only lines are shortened from the beginning. Must be a positive integer. |
-| `-e EXTENSIONS`, `--ext EXTENSIONS` | Comma-separated extensions to search, for example `txt,md,py`. A leading dot is optional. By default the searched extensions are `txt`, `md`, `pdf`, `docx`, `odt`, `odp`, and `pptx`. Specifying this option replaces the defaults; prefix it with `+` (for example, `+py,R,sh`) to add extensions while keeping the defaults. An empty entry selects files without an extension: `,` searches only extensionless files, while `py,` searches `.py` and extensionless files. |
+| `-e EXTENSIONS`, `--ext EXTENSIONS` | Comma-separated regular expressions full-matched against file suffixes, with or without the leading dot. For example, `txt,md` selects `.txt` and `.md`, `py|js` selects `.py` and `.js`, and `docx?` selects `.doc` and `.docx`. By default the searched extensions are `txt`, `md`, `pdf`, `docx`, `odt`, `odp`, and `pptx`. Specifying this option replaces the defaults; prefix it with `+` (for example, `+py,R,sh`) to add patterns while keeping the defaults. An empty entry selects files without an extension: `,` searches only extensionless files, while `py,` searches `.py` and extensionless files. |
 | `-f REGEX`, `--filename REGEX` | Search only files whose name without its extension matches this regular expression. For archives, the archive suffix is removed before testing; archive members are filtered by their member-name stem. |
 | `-c MODE`, `--color MODE` | Set match coloring to `auto`, `always`, or `never`. `auto` (the default) uses color when standard output is a terminal. |
 | `-h`, `--help` | Show the help text and exit. |

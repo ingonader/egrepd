@@ -75,31 +75,53 @@ def configure_logging():
     warnings.filterwarnings("ignore", module=r"pypdf(\.|$)")
 
 
-def get_allowed_extensions(extension_spec: str | None) -> set[str]:
-    """Normalize an extension option, including additive and extensionless forms.
+def get_allowed_extensions(
+    extension_spec: str | None,
+) -> list[re.Pattern[str]]:
+    """Compile extension patterns, including additive and extensionless forms.
 
     Args:
-        extension_spec: Comma-separated extensions. A leading `+` includes the
-            default extensions, and empty entries select files without an
-            extension. `None` selects only the defaults.
+        extension_spec: Comma-separated regular expressions matched against
+            file suffixes. A leading `+` includes the default extensions, and
+            empty entries select files without an extension. `None` selects
+            only the defaults.
 
     Returns:
-        Lowercase extensions with leading dots, including an empty string when
-        extensionless files are selected.
+        Compiled regular expressions for matching file suffixes, including the
+        empty suffix when extensionless files are selected.
     """
-    if extension_spec is None:
-        return DEFAULT_EXTENSIONS
+    include_defaults = extension_spec is None or extension_spec.startswith("+")
+    allowed_extensions = (
+        [
+            re.compile(re.escape(extension), re.IGNORECASE)
+            for extension in DEFAULT_EXTENSIONS
+        ]
+        if include_defaults
+        else []
+    )
 
-    include_defaults = extension_spec.startswith("+")
-    if include_defaults:
-        extension_spec = extension_spec[1:]
-
-    allowed_extensions = set(DEFAULT_EXTENSIONS) if include_defaults else set()
-    for extension in extension_spec.split(","):
-        extension = extension.strip().lower().lstrip(".")
-        allowed_extensions.add(f".{extension}" if extension else "")
+    if extension_spec is not None:
+        if include_defaults:
+            extension_spec = extension_spec[1:]
+        for extension in extension_spec.split(","):
+            extension = extension.strip()
+            allowed_extensions.append(
+                re.compile(extension if extension else r"^$", re.IGNORECASE)
+            )
 
     return allowed_extensions
+
+
+def is_allowed_extension(
+    suffix: str,
+    allowed_extensions: list[re.Pattern[str]],
+) -> bool:
+    """Return whether a file suffix matches any selected extension pattern."""
+    extension = suffix[1:] if suffix.startswith(".") else suffix
+    return any(
+        pattern.fullmatch(suffix) or pattern.fullmatch(extension)
+        for pattern in allowed_extensions
+    )
 
 
 def configure_colors(mode: str) -> tuple[str, str]:
@@ -771,9 +793,9 @@ def collect_files(
 
     Args:
         inputs: File and directory paths to search.
-        formats: Comma-separated extensions. A leading `+` adds to the default
-            extensions, and empty entries select files without an extension.
-            `None` selects the default extensions.
+        formats: Comma-separated extension regular expressions. A leading `+`
+            adds to the default extensions, and empty entries select files
+            without an extension. `None` selects the default extensions.
         filename_pattern: Optional regular expression matched against each
             filename stem.
 
@@ -796,7 +818,7 @@ def collect_files(
             continue
 
         if path.is_file():
-            if path.suffix.lower() in allowed_extensions and (
+            if is_allowed_extension(path.suffix, allowed_extensions) and (
                 filename_pattern is None or filename_pattern.search(path.stem)
             ):
                 files.add(path.resolve())
@@ -806,7 +828,7 @@ def collect_files(
             for candidate in path.rglob("*"):
                 if (
                     candidate.is_file()
-                    and candidate.suffix.lower() in allowed_extensions
+                    and is_allowed_extension(candidate.suffix, allowed_extensions)
                     and (
                         filename_pattern is None
                         or filename_pattern.search(candidate.stem)
@@ -1004,7 +1026,7 @@ def copy_archive_member(
 
 def is_searchable_archive_member(
     member_name: str,
-    allowed_extensions: set[str],
+    allowed_extensions: list[re.Pattern[str]],
     filename_pattern: re.Pattern[str] | None,
     compressed_stream: bool = False,
 ) -> bool:
@@ -1015,7 +1037,7 @@ def is_searchable_archive_member(
 
     Args:
         member_name: Member path as stored in the archive.
-        allowed_extensions: Permitted lowercase extensions, including dots.
+        allowed_extensions: Regular expressions permitted to match the suffix.
         filename_pattern: Optional regular expression applied to the member stem.
         compressed_stream: Whether the member represents a single compressed
             stream without a stored filename.
@@ -1030,7 +1052,7 @@ def is_searchable_archive_member(
     if not suffix and compressed_stream:
         suffix = ".txt"
 
-    return suffix in allowed_extensions and (
+    return is_allowed_extension(suffix, allowed_extensions) and (
         filename_pattern is None or filename_pattern.search(member_path.stem)
     )
 
@@ -1369,8 +1391,10 @@ def _run() -> int:
         default=None,
         metavar="EXTENSIONS",
         help=(
-            "Comma-separated extensions (e.g., 'py,R,java'); a leading '+' adds to "
-            + "the defaults (e.g., '+py,sh' adds both options), and empty entries (e.g., 'py,') select extensionless files. "
+            "Comma-separated extension regexes (e.g., 'py,R,java' or 'docx?|xlsx?'); "
+            + "a leading '+' adds to the defaults (e.g., '+py,sh'), and empty entries "
+            + "(e.g., 'py,') select extensionless files. Patterns match the suffix "
+            + "with or without its leading dot. "
             + "Defaults: "
             + ",".join([i[1:] for i in DEFAULT_EXTENSIONS])
             + "; "
@@ -1395,6 +1419,9 @@ def _run() -> int:
     )
     # Parse and normalize command-line options before discovering input files.
     args = parser.parse_args()
+
+    # for interactive debugging:
+    # args = parser.parse_args(["-a", "ishmael", str(Path(os.getcwd()).parent.parent)])
 
     red, reset = configure_colors(args.color)
 
@@ -1426,9 +1453,15 @@ def _run() -> int:
         except re.error as exc:
             parser.error(f"Invalid filename regular expression: {exc}")
 
+    try:
+        allowed_extensions = get_allowed_extensions(args.ext)
+    except re.error as exc:
+        parser.error(f"Invalid extension regular expression: {exc}")
+
     # Discover ordinary files and archives separately because their contents
     # require different extraction paths.
     files = collect_files(args.paths, args.ext, filename_pattern)
+    files_unique_extensions = {path.suffix for path in files}
     archives = (
         collect_archives(args.paths, filename_pattern) if args.include_archives else []
     )
@@ -1438,7 +1471,6 @@ def _run() -> int:
         return 1
 
     # Filter archive members with the same extension policy used for normal files.
-    allowed_extensions = get_allowed_extensions(args.ext)
     archive_members = []
     for archive_path in archives:
         try:
@@ -1462,6 +1494,12 @@ def _run() -> int:
             )
         )
 
+    # get filenames from archives, and their extentions:
+    archive_members_filenames = [Path(i[2]) for i in archive_members]
+    archive_members_unique_extensions = {i.suffix for i in archive_members_filenames}
+    unique_extensions = files_unique_extensions | archive_members_unique_extensions
+    unique_extensions_str = ",".join([i[1:] for i in unique_extensions])
+
     # Print number of files, and number of archives and their content-files.
     files_searched = 0
     files_total = len(files)
@@ -1472,6 +1510,7 @@ def _run() -> int:
         archive_note = ""
     else:
         archive_note = " (not searching archives)"
+    print(f"Matched extentions in candidate files: {unique_extensions_str}")
     print(f"Searching {files_total} files...{archive_note}")
 
     total_matches = 0
