@@ -62,8 +62,6 @@ ARCHIVE_SUFFIXES = (
 
 VALID_FORMATS = {extension.lstrip(".") for extension in SUPPORTED_EXTENSIONS}
 
-ODF_TEXT_NAMESPACE = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
-
 
 def configure_logging():
     """Reduce warning noise from PDF extraction dependencies.

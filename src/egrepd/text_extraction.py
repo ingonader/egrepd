@@ -1,5 +1,9 @@
 from pathlib import Path
 import subprocess
+import zipfile
+import xml.etree.ElementTree as ET
+
+ODF_TEXT_NAMESPACE = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
 
 
 def extract_pdf_text_pypdf(path: Path) -> list[str]:
