@@ -17,7 +17,7 @@ import logging
 import warnings
 from typing import BinaryIO
 
-from src.egrepd.text_extraction import extract_text
+from .text_extraction import extract_text
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
