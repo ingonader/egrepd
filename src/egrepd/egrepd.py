@@ -161,8 +161,7 @@ def hyperlink(path: Path) -> str:
 
 def show_candidate_id_progress(cnt: int, candidate_name: str) -> None:
     msg = f"Searching candidates: Found {str(cnt)} {candidate_name}..."
-    print("\r\033[K", end="", file=sys.stderr)
-    print(f"{msg}", end="", file=sys.stderr, flush=True)
+    print(f"\r{msg}", end="", file=sys.stderr, flush=True)
 
 
 def collect_files(
