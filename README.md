@@ -40,6 +40,13 @@ uv sync
 uv run egrepd --help
 ```
 
+To install the development dependencies and run the test suite:
+
+```bash
+uv sync --group dev
+uv run pytest
+```
+
 Most document formats are handled by Python packages installed with `egrepd`. Two legacy formats need additional system programs:
 
 * `.doc` files require `antiword` (on Debian or Ubuntu: `sudo apt install antiword`).
