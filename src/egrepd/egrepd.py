@@ -162,10 +162,73 @@ def show_candidate_id_progress(cnt: int, candidate_name: str) -> None:
     print(f"\r{msg}", end="", file=sys.stderr, flush=True)
 
 
+def parse_sort_spec(value: str) -> str:
+    """Validate and normalize a candidate-file sort specification.
+
+    The specification must contain one sort key (`a`, `c`, `t`, or `u`) and may
+    include `r` to reverse the order. A value of `r` alone is normalized to
+    `ar`, meaning reverse alphabetical order.
+
+    Args:
+        value: Sort key and optional reverse flag supplied on the command line.
+
+    Returns:
+        The validated sort specification, with `r` normalized to `ar` when
+        provided alone.
+
+    Raises:
+        argparse.ArgumentTypeError: If the value contains an unsupported,
+            repeated, or conflicting option.
+    """
+    if (
+        not value
+        or any(option not in "actur" for option in value)
+        or len(set(value)) != len(value)
+        or sum(option in "actu" for option in value) > 1
+    ):
+        raise argparse.ArgumentTypeError(
+            "sort must contain one of 'a', 'c', 't', or 'u', optionally with 'r'"
+        )
+
+    if not any(option in "actu" for option in value):
+        if value == "r":
+            return "ar"
+        raise argparse.ArgumentTypeError(
+            "sort must contain one of 'a', 'c', 't', or 'u', optionally with 'r'"
+        )
+
+    return value
+
+
+def sort_paths(paths: set[Path], sort_spec: str) -> list[Path]:
+    """Sort resolved candidate paths by name or file timestamp."""
+    sort_key = next((option for option in sort_spec if option in "actu"), "a")
+    reverse = "r" in sort_spec
+    sorted_paths = sorted(paths)
+
+    timestamp_attributes = {
+        "c": "st_ctime",
+        "t": "st_mtime",
+        "u": "st_atime",
+    }
+    if sort_key in timestamp_attributes:
+        timestamp_attribute = timestamp_attributes[sort_key]
+        sorted_paths.sort(
+            key=lambda path: getattr(path.stat(), timestamp_attribute),
+            reverse=True,
+        )
+
+    if reverse:
+        sorted_paths.reverse()
+
+    return sorted_paths
+
+
 def collect_files(
     inputs: list[str],
     formats: str | None = None,
     filename_pattern: re.Pattern[str] | None = None,
+    sort_spec: str = "a",
 ) -> list[Path]:
     """Find unique files matching extension and optional filename filters.
 
@@ -179,9 +242,11 @@ def collect_files(
             without an extension. `None` selects the default extensions.
         filename_pattern: Optional regular expression matched against each
             filename stem.
+        sort_spec: Sort key (`a`, `c`, `t`, or `u`) and optional reverse flag
+            (`r`).
 
     Returns:
-        Resolved matching file paths in sorted order.
+        Resolved matching file paths in the requested order.
     """
 
     allowed_extensions = get_allowed_extensions(formats)
@@ -223,7 +288,7 @@ def collect_files(
 
     # Clear the progress display:
     print("\r\033[K", end="", file=sys.stderr)
-    return sorted(files)
+    return sort_paths(files, sort_spec)
 
 
 def archive_suffix(filename: str) -> str | None:
@@ -249,6 +314,7 @@ def archive_suffix(filename: str) -> str | None:
 def collect_archives(
     inputs: list[str],
     filename_pattern: re.Pattern[str] | None = None,
+    sort_spec: str = "a",
 ) -> list[Path]:
     """Find supported archives at the given paths, independently of documents.
 
@@ -259,9 +325,11 @@ def collect_archives(
         inputs: File and directory paths to inspect.
         filename_pattern: Optional regular expression matched against archive
             filename stems.
+        sort_spec: Sort key (`a`, `c`, `t`, or `u`) and optional reverse flag
+            (`r`).
 
     Returns:
-        Resolved matching archive paths in sorted order.
+        Resolved matching archive paths in the requested order.
     """
     # Deduplicate overlapping input paths before returning stable output.
     archives = set()
@@ -290,7 +358,7 @@ def collect_archives(
 
     # Clear the progress display:
     print("\r\033[K", end="", file=sys.stderr)
-    return sorted(archives)
+    return sort_paths(archives, sort_spec)
 
 
 def archive_member_names(path: Path) -> tuple[str, list[str]]:
@@ -804,6 +872,18 @@ def _run() -> int:
     )
 
     parser.add_argument(
+        "--sort",
+        type=parse_sort_spec,
+        default="a",
+        metavar="KEY",
+        help=(
+            "Sort candidates by resolved path (a, default), change time (c), "
+            "modification time (t), or access time (u); add r to reverse "
+            "the order (e.g. tr)"
+        ),
+    )
+
+    parser.add_argument(
         "-c",
         "--color",
         choices=["auto", "always", "never"],
@@ -853,10 +933,12 @@ def _run() -> int:
 
     # Discover ordinary files and archives separately because their contents
     # require different extraction paths.
-    files = collect_files(args.paths, args.ext, filename_pattern)
+    files = collect_files(args.paths, args.ext, filename_pattern, args.sort)
     files_unique_extensions = {path.suffix for path in files}
     archives = (
-        collect_archives(args.paths, filename_pattern) if args.include_archives else []
+        collect_archives(args.paths, filename_pattern, args.sort)
+        if args.include_archives
+        else []
     )
 
     if not files and not archives:
