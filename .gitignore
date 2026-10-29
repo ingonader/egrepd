@@ -1,2 +1,4 @@
 src/egrepd/__pycache__/*
 tests/__pycache__/*
+.coverage
+htmlcov/

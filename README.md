@@ -47,6 +47,31 @@ uv sync --group dev
 uv run pytest
 ```
 
+To measure test coverage and show uncovered source lines, run:
+
+```bash
+uv run pytest --cov=egrepd --cov-report=term-missing
+```
+
+To create a browsable HTML report instead, run:
+
+```bash
+uv run pytest --cov=egrepd --cov-report=html
+```
+
+Open `htmlcov/index.html` to browse the report.
+
+Coverage data (`.coverage`) is generated locally and should not be committed.
+To keep a human-readable snapshot in Git for comparison, generate and commit a
+Markdown coverage report:
+
+```bash
+uv run pytest --cov=egrepd --cov-report=term-missing \
+  --cov-report=markdown:coverage-report.md
+```
+
+Commit `coverage-report.md` when you want to update the checked-in snapshot.
+
 Most document formats are handled by Python packages installed with `egrepd`. Two legacy formats need additional system programs:
 
 * `.doc` files require `antiword` (on Debian or Ubuntu: `sudo apt install antiword`).
